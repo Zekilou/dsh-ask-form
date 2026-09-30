@@ -1,0 +1,51 @@
+{
+  "name": "@zekilou/dsh-ask-form",
+  "version": "0.4.0",
+  "type": "module",
+  "description": "Structured form questions for the Harness agent: typed fields, conditionals, validation, rounds, a native-convention centered form, and an opt-in script escape hatch.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "icon": "./icon.svg",
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "icon.svg",
+    "locale/*.json"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-user-questions"
+      ]
+    }
+  },
+  "license": "MIT",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "cordis",
+    "cordis-plugin",
+    "agent",
+    "structured-questions",
+    "form"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Zekilou/dsh-ask-form.git"
+  },
+  "homepage": "https://github.com/Zekilou/dsh-ask-form#readme",
+  "bugs": {
+    "url": "https://github.com/Zekilou/dsh-ask-form/issues"
+  }
+}
