@@ -1,6 +1,6 @@
 {
   "name": "@zekilou/dsh-ask-form",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "description": "Structured form questions for the Harness agent: typed fields, conditionals, validation, rounds, a native-convention centered form, and an opt-in script escape hatch.",
   "exports": {
@@ -47,5 +47,10 @@
   "homepage": "https://github.com/Zekilou/dsh-ask-form#readme",
   "bugs": {
     "url": "https://github.com/Zekilou/dsh-ask-form/issues"
+  },
+  "scripts": {
+    "test": "node tests/host.test.mjs && node tests/client.test.mjs && node tests/interaction.test.mjs",
+    "lab": "node tests/lab/serve.mjs --port 7321",
+    "lab:browser": "node tests/lab/browser.mjs http://127.0.0.1:7321"
   }
 }

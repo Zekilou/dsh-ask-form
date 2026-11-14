@@ -274,5 +274,30 @@ console.log('scenario 6: single/multi offer a free-text answer by default');
   })(), specOf(wire).spec.fields[0]);
 }
 
+console.log('scenario 7: a form must not exceed what the question protocol carries');
+{
+  let refused = null;
+  try {
+    await captured.execute({
+      fields: [
+        { name: 'grid', type: 'matrix', rows: Array.from({ length: 40 }, (_, index) => `row ${index}`), options: ['a', 'b'] },
+        { name: 'weights', type: 'budget', options: Array.from({ length: 30 }, (_, index) => `opt ${index}`) },
+      ],
+    }, {});
+  } catch (error) {
+    refused = error;
+  }
+  check('an oversized form is refused instead of pushed onto the wire', refused !== null && /expands to/.test(String(refused?.message)), refused?.message);
+
+  let ids = null;
+  handler = async ({ questions }) => {
+    ids = questions.map((question) => question.id);
+    throw Object.assign(new Error('cancelled'), { name: 'UserQuestionError', code: 'ASK_CANCELLED' });
+  };
+  await captured.execute({ title: '命名陷阱', fields: [{ name: '__intro__', type: 'text' }] }, {});
+  check('the synthetic marker id never collides with a field id', ids !== null && new Set(ids).size === ids.length, ids);
+  check('the synthetic marker keeps the form reachable', ids !== null && ids.some((id) => id.startsWith('dsh-form:__intro__')), ids);
+}
+
 console.log(failures.length === 0 ? '\nALL CHECKS PASSED' : `\n${failures.length} CHECK(S) FAILED: ${failures.join(', ')}`);
 process.exitCode = failures.length === 0 ? 0 : 1;

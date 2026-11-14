@@ -13,7 +13,7 @@
 - **只重问失败项** —— 每轮只补问没答对/没答的字段，上限由 `max_rounds` 控制
 - **类型化结果** —— `scale`/`slider`/`number` → 数字；`ranking` → 有序数组；`matrix` → `{行: 选择}`；`budget` → `{项: 数字}`；`tags` → 字符串数组
 - **预设问卷包** —— `requirement-intake`、`design-choice`、`release-gate`、`incident-intake`，用 `pack_args` 调参
-- **默认带"其他"** —— `single`、`multi`、`tags` 默认接受自由文本（`allow_other: false` 可关闭）
+- **默认带"其他"** —— `single`、`multi`、`tags` 默认接受自由文本（`allow_other: false` 可关闭）；整行都是目标：点这一行就把光标放进输入框，`single` 里输入即选中，`multi`/`tags` 里回车变成可移除的标签
 - **逃生舱** —— `mode: "script"` 可在 Web 端渲染自定义 React 元素；其它界面由 `script.fallback` 决定行为
 - **优雅降级** —— 没有本插件渲染器的界面仍会把每个字段当成普通问题发出，结果里以 `renderer: "generic"` 如实标注；script 模式则**明确报错**而不是静默降级
 
@@ -87,20 +87,35 @@
 几个值得一提的行为：
 
 - **wire 必须是无损 JSON** —— 规格要能原样通过 JSON 往返；一个"值为 `undefined`"的属性会让 Remote event 网关拒收整个请求。
-- **自证探针** —— 标题为 `DSH_ASK_FORM_PROBE` 的表单会被自动作答，回传一份 DOM 报告（卡片矩形、计算样式、`elementFromPoint` 命中测试）。这个插件就是靠它在没有浏览器自动化的情况下定位问题的，以后诊断坏掉的渲染面也仍然有用。
+- **自证探针（需显式开启）** —— 先设 `window.__DSH_ASK_FORM_PROBE__ = true`，标题为 `DSH_ASK_FORM_PROBE` 的表单才会自动作答并回传 DOM 报告（卡片矩形、计算样式、`elementFromPoint` 命中测试）。默认关闭：会自己作答的表单是隐患，不是功能。
+- **注册失败不外溢** —— bundle 在 `try`/`catch` 里注册并先检查 slot 链是否存在；注册坏掉的代价是"这张表单没有了"，而不是"整页崩了"。
+- **每个文档只有一份样式** —— 样式挂在 `document.head`，不放在渲染树里，所以 script 面与报错面即使第一个出现在屏幕上也是带样式的。
 - **提交看门狗** —— 答案 10 秒内没送达（连接被挂起或替换）就自动解开按钮并写明原因，而不是永远卡在"提交中…"。
 - **bfcache 提示** —— 从后退/前进缓存恢复的页面已经失去了承载该请求的 socket，卡片会直接说明，而不是让点击无声失效。
 
 ## 自验
 
-两套独立脚本，不需要装 monorepo，也不需要浏览器：
+三套独立脚本，不需要装 monorepo，也不需要浏览器：
 
 ```sh
-node tests/host.test.mjs     # 编译 -> 解码 -> 校验 -> 多轮 -> 取消
-node tests/client.test.mjs   # 渲染树、标记选择器、提交信封
+node tests/host.test.mjs          # 编译 -> 解码 -> 校验 -> 多轮 -> 取消
+node tests/client.test.mjs         # 渲染树、标记选择器、提交信封
+node tests/interaction.test.mjs    # 真实状态：输入、回车、标签、blur 竞态、分步
 ```
 
-它们用桩 React（真实 React 由页面提供）驱动真实组件树，因此断言的是结构与协议，不是像素。`tests/client.test.mjs` 从 `package.json` 读取 bundle id，所以改名不会再让它们失配。
+第一套用脚本化应答者驱动 Host 半边；后两套驱动真实组件树 —— `client.test.mjs` 用无状态 hook 桩（看结构与协议），`interaction.test.mjs` 用一个带真实 `useState`/`useRef`/`useEffect` 的小 hook 运行时（可以触发事件再看下一次渲染），"其他"行、数字框和标签 blur 竞态就是它覆盖的。两套都从 `package.json` 读 bundle id，改名不会再失配。
+
+布局、焦点和命中测试必须上浏览器。`tests/lab/` 是一个离线实验台：用真实的 `client.js`、真实的 Host 编译结果，加上 `tests/lab/vendor/` 里的 React 18：
+
+```sh
+node tests/lab/serve.mjs --port 7321                 # 然后开 http://127.0.0.1:7321/?form=single
+node tests/lab/browser.mjs http://127.0.0.1:7321     # 真点击、真键盘、命中测试
+node tests/lab/shots.mjs   http://127.0.0.1:7321     # 前后对比截图（?client=old）
+```
+
+“其他”行的前后对比（旧 bundle 与 0.5.0）： [前](docs/shots/before-single.png) · [后](docs/shots/after-single.png), [多选前](docs/shots/before-multi.png) · [多选后](docs/shots/after-multi.png)
+
+`browser.mjs` 需要能从它所在目录解析到 `playwright-core`；把它放在已装好 `node_modules` 的目录里，并且在一台没人用屏幕的机器上跑。
 
 ## 兼容性
 

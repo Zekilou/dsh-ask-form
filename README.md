@@ -13,7 +13,7 @@ English | [中文](README.zh.md)
 - **Targeted re-asks** — only the fields that failed validation are asked again, up to `max_rounds`
 - **Typed results** — `scale`/`slider`/`number` → number, `ranking` → ordered array, `matrix` → `{row: choice}`, `budget` → `{option: number}`, `tags` → string array
 - **Interview packs** — `requirement-intake`, `design-choice`, `release-gate`, `incident-intake`, tunable through `pack_args`
-- **Free-text "Other" by default** on `single`, `multi` and `tags` (`allow_other: false` closes the list)
+- **Free-text "Other" by default** on `single`, `multi` and `tags` (`allow_other: false` closes the list). The whole row is the target: clicking it focuses the field, typing selects it on `single`, Enter turns it into a removable chip on `multi`/`tags`.
 - **Escape hatch** — `mode: "script"` renders a custom React element in the Web UI; declare `script.fallback` for other surfaces
 - **Graceful degradation** — a surface without this plugin's renderer still receives every field as a plain question, and the result reports `renderer: "generic"`. Script mode fails loud instead of degrading silently.
 
@@ -87,20 +87,42 @@ The bundle has two halves and no build step.
 Notable behaviours:
 
 - **Lossless wire payload** — the spec must survive a JSON round trip unchanged; a present-but-`undefined` property makes the Remote event gateway reject the whole request.
-- **Self-probe** — a form titled `DSH_ASK_FORM_PROBE` is answered automatically with a DOM report (card rect, computed styles, `elementFromPoint` hit tests). It is how this plugin was debugged without browser automation, and it stays useful for diagnosing a broken surface.
+- **Self-probe (opt-in)** — set `window.__DSH_ASK_FORM_PROBE__ = true`, then a form titled `DSH_ASK_FORM_PROBE` answers itself with a DOM report (card rect, computed styles, `elementFromPoint` hit tests). Off by default: a form that answers itself is a hazard, not a feature.
+- **Fail-safe registration** — the bundle registers inside `try`/`catch` and checks that the slot chain exists; a broken registration costs the form surface, never the page.
+- **One stylesheet per document** — styles live on `document.head`, not in the rendered tree, so the script and error surfaces are styled even when they are the first thing on screen.
 - **Watchdog** — if an answer never reaches the Host within 10 seconds (a suspended or replaced connection), the buttons re-enable with an explicit message instead of hanging.
 - **bfcache banner** — a page restored from the back/forward cache lost the socket that carried the request; the card says so instead of ignoring clicks.
 
 ## Verify
 
-Two standalone suites, no monorepo install and no browser needed:
+Three standalone suites, no monorepo install and no browser needed:
 
 ```sh
-node tests/host.test.mjs     # compile -> decode -> validate -> rounds -> cancellation
-node tests/client.test.mjs   # render tree, marker selector, submit envelope
+node tests/host.test.mjs          # compile -> decode -> validate -> rounds -> cancellation
+node tests/client.test.mjs         # render tree, marker selector, submit envelope
+node tests/interaction.test.mjs    # real state: typing, Enter, chips, blur races, steps
 ```
 
-They stub React (the page provides the real one) and drive the real component tree, so they assert structure and protocol, not pixels. `tests/client.test.mjs` reads the bundle id from `package.json`, so a rename cannot desynchronise them.
+The first drives the Host half against scripted answerers. The other two drive the real component
+tree: `client.test.mjs` on stateless hook stubs (structure and protocol), `interaction.test.mjs`
+on a small hook runtime with real `useState`/`useRef`/`useEffect`, so a handler can be fired and
+the following render inspected — that is how the free-text "other" row, the numeric field and the
+tag blur race are covered. Both read the bundle id from `package.json`, so a rename cannot
+desynchronise them.
+
+Layout, focus and hit-testing need a browser. `tests/lab/` is an offline lab that serves the real
+`client.js` with the real Host-compiled payload and React 18 from `tests/lab/vendor/`:
+
+```sh
+node tests/lab/serve.mjs --port 7321                 # then open http://127.0.0.1:7321/?form=single
+node tests/lab/browser.mjs http://127.0.0.1:7321     # real clicks, real keystrokes, hit tests
+node tests/lab/shots.mjs   http://127.0.0.1:7321     # before/after screenshots (?client=old)
+```
+
+Before/after of the free-text row (old bundle vs. 0.5.0): [before](docs/shots/before-single.png) · [after](docs/shots/after-single.png), [multi before](docs/shots/before-multi.png) · [multi after](docs/shots/after-multi.png)
+
+`browser.mjs` needs `playwright-core` resolvable from its directory; run it next to an installed
+`node_modules`, on a machine whose screen nobody is using.
 
 ## Compatibility
 

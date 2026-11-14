@@ -28,6 +28,8 @@ const SPEC_VERSION = 1;
 const MAX_ROUNDS_LIMIT = 5;
 const DEFAULT_MAX_ROUNDS = 3;
 const MAX_FIELDS = 48;
+/** Upper bound on protocol questions a form may expand to (matrix rows and budget rows each count). */
+const MAX_QUESTIONS = 64;
 /** Degraded rendering falls back to a plain option list up to this many ticks. */
 const MAX_DEGRADED_TICKS = 21;
 
@@ -768,12 +770,20 @@ function compileForm(form, values, errors, subset) {
     }
   }
 
+  if (questions.length > MAX_QUESTIONS) {
+    throw new Error(`ask_form: this form expands to ${questions.length} questions (matrix rows and budget rows each count); the question protocol carries at most ${MAX_QUESTIONS}. Split it into more than one call.`);
+  }
+
   const markerIndex = questions.findIndex((question) => Array.isArray(question.options) && question.options.length > 0);
   let markerId;
   if (markerIndex >= 0) {
     markerId = questions[markerIndex].id;
   } else {
+    // A field may legitimately be named `__intro__`, so the synthetic marker picks a free id
+    // rather than assuming one.
+    const used = new Set(questions.map((question) => question.id));
     markerId = 'dsh-form:__intro__';
+    for (let suffix = 2; used.has(markerId); suffix += 1) markerId = `dsh-form:__intro__#${suffix}`;
     questions.unshift({
       id: markerId,
       header: '表单',

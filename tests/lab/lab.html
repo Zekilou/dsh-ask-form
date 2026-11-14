@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ask-form lab</title>
+<style>
+/* Light-theme stand-ins for the Harness --dsw-alias-* tokens this bundle uses, so the lab
+   lays out the same way the real surface does. Values are only cosmetic. */
+:root{
+  color-scheme:light;
+  --dsw-alias-bg-layer-1:#ffffff;
+  --dsw-alias-bg-layer-2:#f7f7f8;
+  --dsw-alias-bg-layer-3:#ededf0;
+  --dsw-alias-bg-overlay:rgb(0 0 0/.06);
+  --dsw-alias-bg-module-platform:#f2f2f4;
+  --dsw-alias-interactive-bg-hover:rgb(0 0 0/.05);
+  --dsw-alias-interactive-bg-active:rgb(0 0 0/.09);
+  --dsw-alias-label-primary:#111318;
+  --dsw-alias-label-secondary:#4a4f5a;
+  --dsw-alias-label-tertiary:#7c828f;
+  --dsw-alias-label-dimmed:#a0a6b2;
+  --dsw-alias-label-primary-foreground:#ffffff;
+  --dsw-alias-border-l2:rgb(0 0 0/.10);
+  --dsw-alias-border-l3:rgb(0 0 0/.14);
+  --dsw-alias-border-l4:rgb(0 0 0/.20);
+  --dsw-alias-brand-primary:#4b6ef5;
+  --dsw-alias-button-primary-fill:#3856f0;
+  --dsw-alias-button-primary-hover:#2f49cf;
+  --dsw-alias-state-business-primary:#3856f0;
+  --dsw-alias-state-error-primary:#c8322c;
+  --dsw-alias-bg-mask-1:rgb(0 0 0/.32);
+  --dsw-radius-xs:4px; --dsw-radius-sm:6px; --dsw-radius-md:8px;
+  --dsw-radius-lg:12px; --dsw-radius-xl:16px; --dsw-radius-panel:16px;
+  --dsw-elevation-prominent:0 16px 48px rgb(0 0 0/.24);
+  --dsw-elevation-soft:0 1px 2px rgb(0 0 0/.12);
+  --dsw-focus-ring-width:2px;
+  --dsw-focus-ring-color:#3856f0;
+  --ds-transition-duration:160ms;
+  --ds-ease-in-out:ease;
+}
+body{margin:0;min-height:100vh;font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;color:#111318;background:#e9eaee}
+#stage{min-height:100vh}
+.lab-status{position:fixed;left:8px;bottom:8px;z-index:2000;font:11px/1.4 ui-monospace,Menlo,monospace;color:#666;background:#fff;border:1px solid #ccc;border-radius:6px;padding:4px 6px;max-width:60vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div class="lab-status" id="lab-status">loading…</div>
+<pre id="lab-answer" style="display:none"></pre>
+
+<script src="/vendor/react.js"></script>
+<script src="/vendor/react-dom.js"></script>
+<script>
+/* Minimal stand-in for the harness client module loader: hand the factory a `require` that
+   resolves the two platform seed words the bundle is allowed to use. */
+window.__ModuleLoader__ = {
+  load(definition) {
+    const mod = definition.factory((specifier) => {
+      if (specifier === 'react') return window.React;
+      if (specifier === 'react-dom') return window.ReactDOM;
+      throw new Error('lab: unexpected require ' + specifier);
+    });
+    window.__plugin = mod;
+  },
+};
+</script>
+<script>
+/* `?client=old` loads the last committed bundle instead of the working tree. */
+document.write('<script src="' + (new URLSearchParams(location.search).get('client') === 'old' ? '/client-old.js' : '/client.js') + '"><\/script>');
+</script>
+<script>
+(async () => {
+  const status = document.getElementById('lab-status');
+  const query = new URLSearchParams(location.search);
+  const form = query.get('form') ?? 'single';
+  const errors = query.get('errors') === '1' ? '&errors=1' : '';
+  const response = await fetch(`/payload.json?form=${encodeURIComponent(form)}${errors}`);
+  const body = await response.json();
+  if (response.ok !== true) { status.textContent = 'payload error: ' + JSON.stringify(body); return; }
+
+  const carrier = {
+    key: 'lab-' + Math.random().toString(36).slice(2),
+    questions: body.questions,
+    answer(payload) {
+      window.__answer = payload;
+      status.textContent = 'answer: ' + JSON.stringify(payload);
+      const pre = document.getElementById('lab-answer');
+      pre.style.display = 'block';
+      pre.textContent = JSON.stringify(payload, null, 2);
+      return Promise.resolve();
+    },
+    cancel() { window.__cancelled = true; status.textContent = 'cancelled'; return Promise.resolve(); },
+  };
+  window.__carrier = carrier;
+
+  const apply = window.__plugin?.apply;
+  if (typeof apply !== 'function') { status.textContent = 'bundle did not export apply'; return; }
+  apply({
+    inject: ['slots'],
+    slots: {
+      inject(name, fn) { window.__slotName = name; fn(); },
+      register(entry, component) { window.__slotEntry = entry; window.__FormComposer = component; return { entry, dispose() {} }; },
+    },
+  });
+
+  if (typeof window.__FormComposer !== 'function') { status.textContent = 'composer not registered'; return; }
+  status.textContent = `form=${form}`;
+  window.__root = window.ReactDOM.createRoot(document.getElementById('stage'));
+  window.__root.render(window.React.createElement(window.__FormComposer, { matched: carrier }));
+})();
+</script>
+</body>
+</html>

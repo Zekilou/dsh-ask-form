@@ -25,9 +25,11 @@ window.__ModuleLoader__.load({
     try { ReactDOM = require('react-dom'); } catch { ReactDOM = null; }
 
     /** Reported by the Client half so a live page can be identified from a screenshot or a probe. */
-    const CLIENT_VERSION = '0.4.0';
-    /** Magic title: the Client reports a DOM probe and answers immediately instead of waiting for input. */
+    const CLIENT_VERSION = '0.5.0';
+    /** Magic title, honored only when a diagnostics flag is set on the page. */
     const PROBE_TITLE = 'DSH_ASK_FORM_PROBE';
+    /** Page flag that opts a document into the self-probe; ordinary pages never self-answer. */
+    const PROBE_FLAG = '__DSH_ASK_FORM_PROBE__';
 
     /** Marker tag shared with the Host half. */
     const MARKER_KIND = 'dsh-form';
@@ -61,7 +63,15 @@ window.__ModuleLoader__.load({
 .daf-option:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,var(--dsw-alias-bg-layer-2))}
 .daf-optionSelected{background:var(--dsw-alias-interactive-bg-hover,var(--dsw-alias-bg-layer-2));border-color:var(--dsw-alias-border-l2)}
 .daf-option:disabled{cursor:default;opacity:.6}
+.daf-optionDisabled{cursor:default;opacity:.6}
 .daf-number{width:20px;height:20px;flex:0 0 20px;margin-top:2px;place-items:center;display:grid;border-radius:var(--dsw-radius-xs,4px);background:var(--dsw-alias-bg-overlay);color:var(--dsw-alias-label-secondary);font-size:12px;font-weight:500;line-height:18px}
+.daf-numberChecked{background:var(--dsw-alias-label-primary);color:var(--dsw-alias-label-primary-foreground,#fff)}
+.daf-otherRow{align-items:center}
+.daf-otherField{display:flex;align-items:center;gap:6px;flex:1;min-width:0}
+.daf-otherInput{flex:1;min-width:0}
+.daf-otherChips{display:flex;flex-wrap:wrap;gap:4px;margin-top:2px}
+.daf-chipRemove{display:inline-flex;align-items:center;padding:0;border:none;background:transparent;color:inherit;cursor:pointer;opacity:.7}
+.daf-chipRemove:hover:not(:disabled){opacity:1}
 .daf-checkbox{width:20px;height:20px;flex:0 0 20px;margin-top:2px;place-items:center;display:grid}
 .daf-checkbox:before{content:"";grid-area:1/1;width:14px;height:14px;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-xs,4px);transition:background-color .12s,border-color .12s}
 .daf-checkbox>svg{grid-area:1/1}
@@ -98,6 +108,8 @@ window.__ModuleLoader__.load({
 .daf-tag{display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border-radius:999px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:11px;font-weight:500;line-height:17px;white-space:nowrap}
 .daf-tagX{display:inline-flex;align-items:center;padding:0;border:none;background:transparent;color:inherit;cursor:pointer}
 .daf-tagInput{flex:1;min-width:120px;padding:0;border:none;outline:none;background:transparent;font:inherit;font-size:14px;line-height:22px;color:var(--dsw-alias-label-primary)}
+.daf-matrixRow .daf-segmentedTrack{flex:1;min-width:0;width:auto}
+.daf-matrixRow .daf-cell{min-width:0;padding:0 6px}
 .daf-rank{display:flex;flex-direction:column;gap:1px}
 .daf-rankRow{display:flex;align-items:center;gap:8px;min-height:40px;padding:6px 8px;border:1px solid transparent;border-radius:var(--dsw-radius-md,8px)}
 .daf-rankRow:hover{background:var(--dsw-alias-interactive-bg-hover,var(--dsw-alias-bg-layer-2))}
@@ -135,6 +147,26 @@ window.__ModuleLoader__.load({
 @media (width<=720px){.daf-card{border-radius:var(--dsw-radius-xl,16px)}.daf-header{padding:10px 12px 0 18px}.daf-fields{padding:4px 8px 0}.daf-option,.daf-rankRow{padding:8px 6px}.daf-footer{align-items:flex-end;padding:0 10px}.daf-matrixLabel{flex-basis:84px}}
 @media (prefers-reduced-motion:reduce){.daf-option,.daf-segment{transition:none}.daf-card{animation:none}}
 `;
+
+    /**
+     * The stylesheet lives on `document.head` for the lifetime of the page, not inside the
+     * rendered tree. `ScriptCard` and `ErrorCard` render without a `FormCard`, and an error
+     * surface that is the *first* thing on screen must still be styled — injecting from one
+     * card's render would leave it bare.
+     */
+    const STYLE_ID = 'dsh-ask-form-styles';
+    let stylesInstalled = false;
+    function ensureStyles() {
+      if (stylesInstalled) return;
+      if (typeof document === 'undefined' || document.head === null || document.head === undefined) return;
+      if (document.getElementById(STYLE_ID) === null) {
+        const node = document.createElement('style');
+        node.id = STYLE_ID;
+        node.textContent = CSS;
+        document.head.appendChild(node);
+      }
+      stylesInstalled = true;
+    }
 
     /* ------------------------------------------------------------------ */
     /* expression evaluator (L2) — mirror of the Host half                 */
@@ -536,8 +568,8 @@ window.__ModuleLoader__.load({
      * Outside a browser (offline tests) it degrades to an in-place layer.
      */
     function Layer({ children }) {
+      ensureStyles();
       const layer = h('div', { className: 'daf-frame' },
-        h('style', { key: 'daf-stylesheet' }, CSS),
         h('div', { className: 'daf-mask', key: 'daf-mask', 'aria-hidden': true }),
         children);
       if (typeof document === 'undefined' || document.body === undefined || ReactDOM === null || typeof ReactDOM.createPortal !== 'function') return layer;
@@ -580,7 +612,7 @@ window.__ModuleLoader__.load({
         multi === true
           ? h('span', { className: cls('daf-checkbox', selected && 'daf-checkboxChecked'), 'aria-hidden': true },
             selected ? h(Icon, { name: 'check', size: 12 }) : null)
-          : h('span', { className: 'daf-number', 'aria-hidden': true }, String((index ?? 0) + 1)),
+          : h('span', { className: cls('daf-number', selected && 'daf-numberChecked'), 'aria-hidden': true }, String((index ?? 0) + 1)),
         h('span', { className: 'daf-optionCopy' }, children));
     }
 
@@ -621,20 +653,139 @@ window.__ModuleLoader__.load({
         }, optionCopy(option))));
     }
 
+    /** Values on the list that are not one of the declared options (typed "other" answers). */
+    function extrasOf(field, list) {
+      const declared = new Set((field.options ?? []).map((option) => valueKey(option.value)));
+      return list.filter((item) => !declared.has(valueKey(item)));
+    }
+
+    /**
+     * The free-text "other" row.
+     *
+     * It is a control, not a label with an input in it: the whole row focuses the field, typing
+     * *is* the selection for `single`, Enter adds a chip for `multi`/`tags`, chips can be
+     * removed, and extras supplied through `initial` or a re-ask are visible instead of being
+     * silently carried in the answer object.
+     */
+    function OtherRow({ field, multi, value, list, disabled, onChange }) {
+      const options = field.options ?? [];
+      const extras = extrasOf(field, list);
+      const declared = new Set(options.map((option) => valueKey(option.value)));
+      const active = multi !== true && value !== undefined && !declared.has(valueKey(value));
+      const initialDraft = multi === true ? '' : typeof value === 'string' && !declared.has(valueKey(value)) ? value : '';
+      const [draft, setDraft] = React.useState(initialDraft);
+      const inputRef = React.useRef(null);
+      const seen = React.useRef(value);
+      const listRef = React.useRef(list);
+      listRef.current = list;
+
+      /** Keep the box in step with a value set from outside (a re-ask's prefill, or a clear). */
+      React.useEffect(() => {
+        if (multi === true) return;
+        if (valueKey(value) === valueKey(seen.current)) return;
+        seen.current = value;
+        setDraft(value === undefined ? '' : declared.has(valueKey(value)) ? '' : String(value));
+      }, [value, multi]);
+
+      const addExtra = (text) => {
+        const trimmed = String(text).trim();
+        if (trimmed === '') return false;
+        const current = listRef.current;
+        if (current.some((item) => String(item) === trimmed)) return false;
+        onChange([...current, trimmed]);
+        return true;
+      };
+      /** `single` holds one custom answer, and typing commits it so the row reads as chosen. */
+      const commitSingle = (text) => {
+        const trimmed = text.trim();
+        if (trimmed === '') {
+          if (active) { seen.current = undefined; onChange(undefined); }
+          return;
+        }
+        seen.current = trimmed;
+        onChange(trimmed);
+      };
+      const commit = () => {
+        if (multi === true) { if (addExtra(draft)) setDraft(''); return; }
+        commitSingle(draft);
+      };
+      const removeExtra = (item) => onChange(listRef.current.filter((entry) => valueKey(entry) !== valueKey(item)));
+
+      return h('div', {
+        key: '__other__',
+        className: cls('daf-option', 'daf-otherRow', active && 'daf-optionSelected', disabled && 'daf-optionDisabled'),
+        // A row that only reacts where its input happens to sit reads as broken; the whole row
+        // is the target and it puts the caret in the field.
+        onClick: () => {
+          if (disabled) return;
+          const node = inputRef.current;
+          if (node !== null && typeof node.focus === 'function') node.focus();
+        },
+      },
+        multi === true
+          ? h('span', { className: cls('daf-checkbox', extras.length > 0 && 'daf-checkboxChecked'), 'aria-hidden': true },
+            extras.length > 0 ? h(Icon, { name: 'check', size: 12 }) : null)
+          : h('span', { className: cls('daf-number', active && 'daf-numberChecked'), 'aria-hidden': true },
+            active ? h(Icon, { name: 'check', size: 12 }) : '+'),
+        h('span', { className: 'daf-optionCopy' },
+          h('div', { className: 'daf-otherField' },
+            h('div', { className: 'daf-inputWrap daf-otherInput' },
+              h('input', {
+                ref: inputRef,
+                className: 'daf-input',
+                type: 'text',
+                value: draft,
+                disabled,
+                placeholder: multi === true ? '其他（回车添加）' : '其他答案（输入即选中）',
+                'aria-label': `${field.label}：其他答案`,
+                onChange: (event) => {
+                  const text = event.target.value;
+                  setDraft(text);
+                  if (multi !== true) commitSingle(text); // typing selects, the way editing a chosen option would
+                },
+                onKeyDown: (event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    commit();
+                    return;
+                  }
+                  if (event.key === 'Backspace' && draft === '' && extras.length > 0) {
+                    event.preventDefault();
+                    removeExtra(extras[extras.length - 1]);
+                  }
+                },
+                onBlur: (event) => {
+                  if (multi !== true || draft.trim() === '') return;
+                  const next = event.relatedTarget;
+                  // Focus moving inside this row means a click is about to commit it properly;
+                  // committing here as well would add the same text twice.
+                  if (next !== null && next !== undefined && typeof next.closest === 'function' && next.closest('.daf-otherRow') !== null) return;
+                  commit();
+                },
+              })),
+            multi === true && draft.trim() !== ''
+              ? h('button', { type: 'button', className: 'daf-linkBtn', disabled, onClick: commit }, '添加')
+              : null),
+          multi !== true || extras.length === 0
+            ? null
+            : h('div', { className: 'daf-otherChips' }, extras.map((item) => h('span', { className: 'daf-tag', key: String(item) },
+              String(item),
+              h('button', {
+                type: 'button',
+                className: 'daf-chipRemove',
+                disabled,
+                'aria-label': `移除其他答案 ${String(item)}`,
+                onClick: () => removeExtra(item),
+              }, h(Icon, { name: 'close', size: 9 })))))));
+    }
+
     function ChoiceControl({ field, value, onChange, disabled }) {
       const multi = field.type === 'multi' || field.type === 'tags';
       const list = Array.isArray(value) ? value : value === undefined ? [] : [value];
-      const [other, setOther] = React.useState('');
       const has = (candidate) => list.some((item) => valueKey(item) === valueKey(candidate));
       const toggle = (optionValue) => {
         if (!multi) { onChange(optionValue); return; }
         onChange(has(optionValue) ? list.filter((item) => valueKey(item) !== valueKey(optionValue)) : [...list, optionValue]);
-      };
-      const addOther = () => {
-        const text = other.trim();
-        if (text === '') return;
-        onChange([...list, text]);
-        setOther('');
       };
       return h('div', { className: 'daf-options', role: multi ? 'group' : 'radiogroup', 'aria-label': field.label },
         field.options.map((option, index) => h(OptionRow, {
@@ -646,24 +797,7 @@ window.__ModuleLoader__.load({
           onClick: () => toggle(option.value),
         }, optionCopy(option))),
         allowsOther(field)
-          ? h('div', { className: 'daf-option', key: '__other__' },
-            multi
-              ? h('span', { className: 'daf-checkbox', 'aria-hidden': true }, null)
-              : h('span', { className: 'daf-number', 'aria-hidden': true }, '·'),
-            h('span', { className: 'daf-optionCopy' },
-              h('input', {
-                className: 'daf-input',
-                value: other,
-                disabled,
-                placeholder: multi ? '其他（回车添加）' : '其他答案（回车选择）',
-                onChange: (event) => setOther(event.target.value),
-                onKeyDown: (event) => {
-                  if (event.key !== 'Enter') return;
-                  event.preventDefault();
-                  if (multi) addOther();
-                  else if (other.trim() !== '') onChange(other.trim());
-                },
-              })))
+          ? h(OtherRow, { field, multi, value, list, disabled, onChange })
           : null);
     }
 
@@ -701,20 +835,45 @@ window.__ModuleLoader__.load({
           : null);
     }
 
+    /**
+     * Numeric input state.
+     *
+     * A controlled `<input type="number">` fights the browser: half-typed text ("1e", "-", "0.")
+     * either vanishes or is re-rendered as `NaN`. Keep the raw text locally, commit a number when
+     * it parses, and commit the text when it does not — validation then explains the failure
+     * instead of the box silently eating what was typed.
+     */
+    function useNumericText(value, onChange) {
+      const [text, setText] = React.useState(value === undefined || value === null ? '' : String(value));
+      const seen = React.useRef(value);
+      React.useEffect(() => {
+        if (valueKey(value) === valueKey(seen.current)) return;
+        seen.current = value;
+        setText(value === undefined || value === null ? '' : String(value));
+      }, [value]);
+      const edit = (raw) => {
+        setText(raw);
+        if (raw === '') { seen.current = undefined; onChange(undefined); return; }
+        const number = Number(raw);
+        const next = Number.isFinite(number) ? number : raw;
+        seen.current = next;
+        onChange(next);
+      };
+      return [text, edit];
+    }
+
     function NumberControl({ field, value, onChange, disabled, invalid }) {
+      const [text, edit] = useNumericText(value, onChange);
       return h('div', { className: cls('daf-inputWrap', invalid && 'daf-invalid') },
         h('input', {
           className: 'daf-input',
-          type: 'number',
-          inputMode: 'decimal',
-          min: field.min,
-          max: field.max,
-          step: field.type === 'integer' ? 1 : field.step,
-          value: value === undefined || value === null ? '' : String(value),
+          type: 'text',
+          inputMode: field.type === 'integer' ? 'numeric' : 'decimal',
+          value: text,
           placeholder: field.placeholder ?? '',
           disabled,
           'aria-label': field.label,
-          onChange: (event) => onChange(event.target.value === '' ? undefined : Number(event.target.value)),
+          onChange: (event) => edit(event.target.value),
         }),
         field.unit !== undefined ? h('span', { className: 'daf-tag' }, field.unit) : null);
     }
@@ -818,37 +977,50 @@ window.__ModuleLoader__.load({
           }))));
     }
 
+    function BudgetRow({ option, number, target, disabled, onChange }) {
+      const [text, edit] = useNumericText(number, onChange);
+      const value = Number.isFinite(number) ? number : 0;
+      const share = target === 0 ? 0 : Math.max(0, Math.min(100, (value / target) * 100));
+      return h('div', { className: 'daf-budgetRow' },
+        h('span', { className: 'daf-budgetName', title: option.label }, option.label),
+        h('div', { className: 'daf-inputWrap daf-budgetInput' },
+          h('input', {
+            className: 'daf-input',
+            type: 'text',
+            inputMode: 'numeric',
+            value: text,
+            disabled,
+            'aria-label': `${option.label} 的数值`,
+            onChange: (event) => edit(event.target.value),
+          })),
+        h('div', { className: 'daf-bar' },
+          h('div', { className: 'daf-barFill', style: { width: `${share}%` } })));
+    }
+
     function BudgetControl({ field, value, onChange, disabled }) {
       const options = field.options ?? [];
       const record = value !== null && typeof value === 'object' ? value : {};
       const target = field.sumTo ?? 100;
       const numbers = options.map((option) => Number(record[option.label]));
       const total = numbers.reduce((sum, number) => sum + (Number.isFinite(number) ? number : 0), 0);
+      /** Split evenly without leaving a remainder, so "平均分配" never lands on 99.99 / 100. */
+      const distribute = () => {
+        if (options.length === 0) return;
+        const share = Math.round((target / options.length) * 100) / 100;
+        const head = Math.round((target - share * (options.length - 1)) * 100) / 100;
+        onChange(Object.fromEntries(options.map((option, index) => [option.label, index === 0 ? head : share])));
+      };
       return h('div', { className: 'daf-budget' },
-        options.map((option, index) => h('div', { className: 'daf-budgetRow', key: option.label },
-          h('span', { className: 'daf-budgetName', title: option.label }, option.label),
-          h('div', { className: 'daf-inputWrap daf-budgetInput' },
-            h('input', {
-              className: 'daf-input',
-              type: 'number',
-              min: 0,
-              max: target,
-              step: 1,
-              disabled,
-              value: Number.isFinite(numbers[index]) ? String(numbers[index]) : '',
-              'aria-label': `${option.label} 的数值`,
-              onChange: (event) => onChange({ ...record, [option.label]: event.target.value === '' ? undefined : Number(event.target.value) }),
-            })),
-          h('div', { className: 'daf-bar' },
-            h('div', {
-              className: 'daf-barFill',
-              style: { width: `${Math.max(0, Math.min(100, ((Number.isFinite(numbers[index]) ? numbers[index] : 0) / target) * 100))}%` },
-            })))),
-        h('div', { className: cls('daf-total', total !== target && 'daf-error') }, `合计 ${total} / ${target}`),
-        h('button', {
-          type: 'button', className: 'daf-linkBtn', disabled,
-          onClick: () => onChange(Object.fromEntries(options.map((option) => [option.label, target / options.length]))),
-        }, '平均分配'));
+        options.map((option, index) => h(BudgetRow, {
+          key: option.label,
+          option,
+          number: numbers[index],
+          target,
+          disabled,
+          onChange: (next) => onChange({ ...record, [option.label]: next === undefined ? undefined : next }),
+        })),
+        h('div', { className: cls('daf-total', Math.abs(total - target) > 1e-6 && 'daf-error') }, `合计 ${Math.round(total * 100) / 100} / ${target}`),
+        h('button', { type: 'button', className: 'daf-linkBtn', disabled, onClick: distribute }, '平均分配'));
     }
 
 
@@ -893,6 +1065,12 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = React.useState(null);
       const [failure, setFailure] = React.useState(null);
       const [index, setIndex] = React.useState(0);
+      /**
+       * The live values, readable during an event that runs in the same tick as a child's
+       * `onChange` (a tag committed on blur right before the submit click, for instance).
+       * `values` state alone is a render behind at that moment, which dropped input silently.
+       */
+      const valuesRef = React.useRef(values);
       const visible = visibleFields(spec, values);
       const steps = spec.layout === 'steps';
       const current = visible.length === 0 ? undefined : visible[Math.min(index, visible.length - 1)];
@@ -904,7 +1082,10 @@ window.__ModuleLoader__.load({
        * sits on top of it, then answers at once — no user interaction and no screenshot needed.
        */
       React.useEffect(() => {
-        if (spec.title !== PROBE_TITLE || probed.current) return undefined;
+        if (probed.current) return undefined;
+        // A form that answers itself is a hazard: the magic title alone must not be enough.
+        if (typeof window === 'undefined' || window[PROBE_FLAG] !== true) return undefined;
+        if (spec.title !== PROBE_TITLE) return undefined;
         probed.current = true;
         const timer = setTimeout(() => {
           const name = (node) => {
@@ -1013,7 +1194,9 @@ window.__ModuleLoader__.load({
       };
 
       const setValue = (name, next) => {
-        setValues((previous) => ({ ...previous, [name]: next }));
+        const merged = { ...valuesRef.current, [name]: next };
+        valuesRef.current = merged;
+        setValues(merged);
         setErrors((previous) => {
           if (previous[name] === undefined) return previous;
           const copy = { ...previous };
@@ -1028,16 +1211,23 @@ window.__ModuleLoader__.load({
         setBusy('cancel');
         setFailure(null);
         armWatchdog();
-        Promise.resolve(carrier.cancel()).then(clearWatchdog).catch((cause) => {
+        try {
+          Promise.resolve(carrier.cancel()).then(clearWatchdog).catch((cause) => {
+            clearWatchdog();
+            setBusy(null);
+            setFailure(cause instanceof Error ? cause.message : String(cause));
+          });
+        } catch (cause) {
           clearWatchdog();
           setBusy(null);
           setFailure(cause instanceof Error ? cause.message : String(cause));
-        });
+        }
       };
 
       const submit = () => {
         if (busy !== null) return;
-        const failures = validateAll(spec, values);
+        const current = valuesRef.current;
+        const failures = validateAll(spec, current);
         if (failures.length > 0) {
           setErrors(Object.fromEntries(failures.map((entry) => [entry.name, entry.message])));
           setFailure(`还有 ${failures.length} 项需要修正`);
@@ -1048,42 +1238,41 @@ window.__ModuleLoader__.load({
           return;
         }
         const payload = {};
-        for (const field of visibleFields(spec, values)) {
-          if (values[field.name] !== undefined) payload[field.name] = values[field.name];
+        for (const field of visibleFields(spec, current)) {
+          if (current[field.name] !== undefined) payload[field.name] = current[field.name];
         }
         const trimmed = notes.trim();
         setBusy('submit');
         setFailure(null);
         armWatchdog();
-        Promise.resolve(carrier.answer({
-          answers: [{
-            id: spec.markerId ?? 'dsh-form:__form__',
-            selected: [],
-            custom: `${ENVELOPE_PREFIX}${JSON.stringify({ values: payload, ...(trimmed === '' ? {} : { notes: trimmed }) })}`,
-          }],
-        }))
-          .then(() => { clearWatchdog(); drafts.delete(carrier.key); })
-          .catch((cause) => {
-            clearWatchdog();
-            setBusy(null);
-            setFailure(cause instanceof Error ? cause.message : String(cause));
-          });
+        try {
+          Promise.resolve(carrier.answer({
+            answers: [{
+              id: spec.markerId ?? 'dsh-form:__form__',
+              selected: [],
+              custom: `${ENVELOPE_PREFIX}${JSON.stringify({ values: payload, ...(trimmed === '' ? {} : { notes: trimmed }) })}`,
+            }],
+          }))
+            .then(() => { clearWatchdog(); drafts.delete(carrier.key); })
+            .catch((cause) => {
+              clearWatchdog();
+              setBusy(null);
+              setFailure(cause instanceof Error ? cause.message : String(cause));
+            });
+        } catch (cause) {
+          clearWatchdog();
+          setBusy(null);
+          setFailure(cause instanceof Error ? cause.message : String(cause));
+        }
       };
 
-      const rendered = [];
-      const shown = steps ? (current === undefined ? [] : [current]) : visible;
-      for (const field of shown) {
-        rendered.push(h(FieldBlock, {
-          key: field.name,
-          field,
-          value: values[field.name],
-          message: errors[field.name],
-          disabled: busy !== null,
-          onChange: (next) => setValue(field.name, next),
-        }));
-      }
-      if (!steps && spec.notes !== null && spec.notes !== undefined) {
-        rendered.push(h('div', { className: 'daf-field', key: '__notes__' },
+      const hasNotes = spec.notes !== null && spec.notes !== undefined;
+      /** `steps` pages through the fields and then the notes block; `single` shows everything. */
+      const stepCount = steps ? visible.length + (hasNotes ? 1 : 0) : visible.length;
+      const stepIndex = steps ? Math.min(index, Math.max(0, stepCount - 1)) : 0;
+      const onNotesStep = steps && hasNotes && stepIndex >= visible.length;
+      const notesBlock = hasNotes && (!steps || onNotesStep)
+        ? h('div', { className: 'daf-field', key: '__notes__' },
           h('div', { className: 'daf-label' }, spec.notes.label ?? '补充说明'),
           h('div', { className: 'daf-textareaBlock' },
             h('textarea', {
@@ -1094,8 +1283,22 @@ window.__ModuleLoader__.load({
               placeholder: spec.notes.placeholder ?? '',
               'aria-label': spec.notes.label ?? '补充说明',
               onChange: (event) => setNotes(event.target.value),
-            }))));
+            })))
+        : null;
+
+      const rendered = [];
+      const shown = steps ? (onNotesStep || current === undefined ? [] : [current]) : visible;
+      for (const field of shown) {
+        rendered.push(h(FieldBlock, {
+          key: field.name,
+          field,
+          value: values[field.name],
+          message: errors[field.name],
+          disabled: busy !== null,
+          onChange: (next) => setValue(field.name, next),
+        }));
       }
+      if (notesBlock !== null) rendered.push(notesBlock);
 
       return h(Layer, null,
         h('section', {
@@ -1126,16 +1329,16 @@ window.__ModuleLoader__.load({
                   label: '上一题',
                   name: 'left',
                   size: 12,
-                  disabled: busy !== null || index === 0,
+                  disabled: busy !== null || stepIndex === 0,
                   onClick: () => setIndex((previous) => Math.max(0, previous - 1)),
                 }),
-                h('span', { className: 'daf-progress' }, `${Math.min(index, Math.max(0, visible.length - 1)) + 1} / ${visible.length}`),
+                h('span', { className: 'daf-progress' }, `${stepIndex + 1} / ${stepCount}`),
                 h(IconButton, {
                   label: '下一题',
                   name: 'right',
                   size: 12,
-                  disabled: busy !== null || index >= visible.length - 1,
-                  onClick: () => setIndex((previous) => Math.min(visible.length - 1, previous + 1)),
+                  disabled: busy !== null || stepIndex >= stepCount - 1,
+                  onClick: () => setIndex((previous) => Math.min(Math.max(0, stepCount - 1), previous + 1)),
                 }))
               : null,
             h('div', { className: 'daf-feedback', role: 'status' }, failure ?? ''),
@@ -1205,7 +1408,7 @@ window.__ModuleLoader__.load({
       }
       if (element === undefined || element === null) return h(ErrorCard, { carrier, error: new Error('script returned no element') });
 
-      return h('div', { className: 'daf-frame' },
+      return h(Layer, null,
         h('section', { className: 'daf-card' },
           h('header', { className: 'daf-header' },
             h('div', { className: 'daf-headingBlock' },
@@ -1245,7 +1448,7 @@ window.__ModuleLoader__.load({
           }],
         })).catch(() => setBusy(false));
       };
-      return h('div', { className: 'daf-frame' },
+      return h(Layer, null,
         h('section', { className: 'daf-card' },
           h('header', { className: 'daf-header' },
             h('div', { className: 'daf-headingBlock' },
@@ -1306,11 +1509,22 @@ window.__ModuleLoader__.load({
     }
 
     function apply(ctx) {
-      ctx.slots.inject('conversation.composer', () => ctx.slots.register({
-        name: 'conversation.composer',
-        priority: -100,
-        select: ({ pendingInteraction }) => (specOf(pendingInteraction) === null ? null : pendingInteraction),
-      }, FormComposer));
+      // A client plugin must never be able to take the page down with it: a missing slot
+      // registry or a moved slot chain should cost the form surface, nothing more.
+      try {
+        const slots = ctx === null || ctx === undefined ? undefined : ctx.slots;
+        if (slots === undefined || slots === null || typeof slots.inject !== 'function') {
+          if (typeof console !== 'undefined') console.warn('[ask-form] no slot context; the built-in question surface stays in charge');
+          return;
+        }
+        slots.inject('conversation.composer', () => slots.register({
+          name: 'conversation.composer',
+          priority: -100,
+          select: ({ pendingInteraction }) => (specOf(pendingInteraction) === null ? null : pendingInteraction),
+        }, FormComposer));
+      } catch (error) {
+        if (typeof console !== 'undefined') console.error('[ask-form] composer registration failed; the built-in question surface stays in charge', error);
+      }
     }
 
     return { inject: ['slots'], apply };
