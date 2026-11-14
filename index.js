@@ -1172,7 +1172,7 @@ function createTool(ctx) {
     'A `pack` supplies a ready-made interview: requirement-intake, design-choice, release-gate, incident-intake, tunable through pack_args.',
     'The Host validates every visible field, re-asks only the fields that failed (up to max_rounds), and returns typed values: scale/slider/number -> number, ranking -> ordered array, matrix -> {row: choice}, budget -> {option: number}, tags -> string array.',
     'Rendering: the plugin renders one form page in the Harness Web UI. Other surfaces fall back to the generic question flow with the same fields as plain questions, and the result reports renderer as "generic" instead ("unknown" when the call ended before any renderer answered).',
-    'Escape hatch: set mode: "script" plus script.source to render a custom React element. That is honored only by this plugin\'s renderer; declare script.fallback ("reject", or "fields" with fallback_fields) to say what happens elsewhere. Prefer the declarative fields; use script only when no field type expresses the interaction.',
+    'Escape hatch: set mode: "script" plus script.source to render a custom React element. That is honored only by this plugin\'s renderer, and the Web UI runs it only on a page that explicitly opts in, because arbitrary JS can freeze the tab; declare script.fallback ("reject", or "fields" with fallback_fields) to say what happens elsewhere. Prefer the declarative fields; use script only when no field type expresses the interaction.',
   ].join(' '),
   parameters: {
     type: 'object',

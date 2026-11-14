@@ -25,11 +25,19 @@ window.__ModuleLoader__.load({
     try { ReactDOM = require('react-dom'); } catch { ReactDOM = null; }
 
     /** Reported by the Client half so a live page can be identified from a screenshot or a probe. */
-    const CLIENT_VERSION = '0.5.0';
+    const CLIENT_VERSION = '0.6.0';
     /** Magic title, honored only when a diagnostics flag is set on the page. */
     const PROBE_TITLE = 'DSH_ASK_FORM_PROBE';
     /** Page flag that opts a document into the self-probe; ordinary pages never self-answer. */
     const PROBE_FLAG = '__DSH_ASK_FORM_PROBE__';
+    /**
+     * Page flag that opts a document into `mode: "script"`.
+     *
+     * Script mode runs model-authored JavaScript inside this page through `new Function`, and
+     * nothing in a browser can interrupt a runaway loop in it: one bad `while (true)` freezes the
+     * whole app with no way back. So the escape hatch is opt-in per page, not default-on.
+     */
+    const SCRIPT_FLAG = '__DSH_ASK_FORM_SCRIPT__';
 
     /** Marker tag shared with the Host half. */
     const MARKER_KIND = 'dsh-form';
@@ -39,9 +47,11 @@ window.__ModuleLoader__.load({
     const DRAFT_LIMIT = 8;
 
     const CSS = `
-.daf-frame{position:fixed;inset:0;z-index:1000;align-items:center;justify-content:center;padding:max(24px,var(--dsh-frame-top-clearance,24px)) 24px;display:flex}
-.daf-mask{position:absolute;inset:0;background:var(--dsw-alias-bg-mask-1,rgb(0 0 0/.32));backdrop-filter:var(--dsw-mask-blur,none);animation:dafFade var(--ds-transition-duration,160ms) var(--ds-ease-in-out,ease)}
-.daf-card{position:relative;z-index:1;width:min(800px,100%);max-height:min(60vh,560px);flex-direction:column;display:flex;overflow:hidden;padding:0 0 12px;border:0;border-radius:var(--dsw-radius-panel,16px);background:var(--dsw-alias-bg-layer-2);box-shadow:var(--dsw-elevation-prominent,0 16px 48px rgb(0 0 0/.24));color:var(--dsw-alias-label-primary);animation:dafFade var(--ds-transition-duration,160ms) var(--ds-ease-in-out,ease);--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2)}
+/* The frame is a *positioning* layer only: it must never swallow a click, and it must never
+   sit above the app's own dialogs (an approval prompt behind a form would be unreachable).
+   Only the card itself is interactive. */
+.daf-frame{position:fixed;inset:0;z-index:40;pointer-events:none;align-items:center;justify-content:center;padding:max(24px,var(--dsh-frame-top-clearance,24px)) 24px;display:flex}
+.daf-card{position:relative;z-index:1;pointer-events:auto;width:min(800px,100%);max-height:min(60vh,560px);flex-direction:column;display:flex;overflow:hidden;padding:0 0 12px;border:0;border-radius:var(--dsw-radius-panel,16px);background:var(--dsw-alias-bg-layer-2);box-shadow:var(--dsw-elevation-prominent,0 16px 48px rgb(0 0 0/.24));color:var(--dsw-alias-label-primary);animation:dafFade var(--ds-transition-duration,160ms) var(--ds-ease-in-out,ease);--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2)}
 @keyframes dafFade{from{opacity:0}to{opacity:1}}
 .daf-card,.daf-card *{box-sizing:border-box}
 .daf-header{flex-shrink:0;justify-content:space-between;align-items:flex-start;gap:16px;padding:20px 16px 0 24px;display:flex}
@@ -569,9 +579,7 @@ window.__ModuleLoader__.load({
      */
     function Layer({ children }) {
       ensureStyles();
-      const layer = h('div', { className: 'daf-frame' },
-        h('div', { className: 'daf-mask', key: 'daf-mask', 'aria-hidden': true }),
-        children);
+      const layer = h('div', { className: 'daf-frame' }, children);
       if (typeof document === 'undefined' || document.body === undefined || ReactDOM === null || typeof ReactDOM.createPortal !== 'function') return layer;
       return ReactDOM.createPortal(layer, document.body);
     }
@@ -1058,13 +1066,21 @@ window.__ModuleLoader__.load({
     }
 
     function FormCard({ carrier, spec }) {
-      const restored = restoreDraft(carrier.key);
+      /**
+       * Drafts are keyed by the form, not by the pending request: a dismissed form that the model
+       * re-asks restores what was typed instead of starting from scratch. That is what makes it
+       * safe to leave the form at any moment.
+       */
+      const draftKey = spec.formId ?? carrier.key;
+      const restored = restoreDraft(draftKey);
       const [values, setValues] = React.useState(() => (restored === null ? initialValues(spec) : restored.values));
       const [notes, setNotes] = React.useState(() => (restored === null ? '' : restored.notes ?? ''));
       const [errors, setErrors] = React.useState(() => Object.fromEntries((spec.errors ?? []).map((error) => [error.name, error.message])));
       const [busy, setBusy] = React.useState(null);
       const [failure, setFailure] = React.useState(null);
       const [index, setIndex] = React.useState(0);
+      /** Set the moment the card stops being this page's problem — it unmounts locally. */
+      const [closed, setClosed] = React.useState(false);
       /**
        * The live values, readable during an event that runs in the same tick as a child's
        * `onChange` (a tag committed on blur right before the submit click, for instance).
@@ -1162,7 +1178,7 @@ window.__ModuleLoader__.load({
         return () => clearTimeout(timer);
       }, [carrier, spec.title, spec.markerId]);
 
-      React.useEffect(() => { saveDraft(carrier.key, { values, notes }); }, [carrier.key, values, notes]);
+      React.useEffect(() => { saveDraft(draftKey, { values, notes }); }, [draftKey, values, notes]);
 
       /** Re-enable the card when the answer never reaches the Host (a frozen or replaced connection). */
       const watchdog = React.useRef(null);
@@ -1189,7 +1205,7 @@ window.__ModuleLoader__.load({
         watchdog.current = setTimeout(() => {
           watchdog.current = null;
           setBusy(null);
-          setFailure('提交没有响应：连接可能已断开（页面被冻结或恢复过）。请重试，或刷新页面后重新提问。');
+          setFailure('提交没有响应：连接可能已断开（页面被冻结或恢复过）。可以重试，或按 Esc / 点「关闭」直接收起这张卡片。');
         }, 10000);
       };
 
@@ -1206,23 +1222,39 @@ window.__ModuleLoader__.load({
         setFailure(null);
       };
 
-      const cancel = () => {
-        if (busy !== null) return;
-        setBusy('cancel');
-        setFailure(null);
-        armWatchdog();
+      /**
+       * Leaving is a local operation and it is always available.
+       *
+       * The card used to keep its own exit controls disabled while a submit was in flight and to
+       * depend on the socket to make the overlay go away — so a dropped connection left a
+       * full-page layer with no way out. Closing now removes the card from this page
+       * unconditionally; telling the Host is a best-effort follow-up that cannot undo it.
+       */
+      const close = () => {
+        clearWatchdog();
+        setClosed(true);
+        setBusy(null);
         try {
-          Promise.resolve(carrier.cancel()).then(clearWatchdog).catch((cause) => {
-            clearWatchdog();
-            setBusy(null);
-            setFailure(cause instanceof Error ? cause.message : String(cause));
-          });
-        } catch (cause) {
-          clearWatchdog();
-          setBusy(null);
-          setFailure(cause instanceof Error ? cause.message : String(cause));
+          if (typeof carrier.cancel === 'function') Promise.resolve(carrier.cancel()).catch(() => {});
+        } catch {
+          /* the card is already gone locally; a failed cancel must not resurrect it */
         }
       };
+
+      /** Escape is the universal escape hatch: a question must never be able to trap the page. */
+      React.useEffect(() => {
+        if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return undefined;
+        if (closed) return undefined;
+        const onKeyDown = (event) => {
+          if (event.key !== 'Escape') return;
+          event.preventDefault();
+          close();
+        };
+        window.addEventListener('keydown', onKeyDown, true);
+        return () => window.removeEventListener('keydown', onKeyDown, true);
+      }, [closed]);
+
+      const cancel = close;
 
       const submit = () => {
         if (busy !== null) return;
@@ -1234,6 +1266,9 @@ window.__ModuleLoader__.load({
           if (steps) {
             const target = visible.findIndex((field) => field.name === failures[0].name);
             if (target >= 0) setIndex(target);
+            // A failure the pager cannot point at would leave the form stuck on a page with no
+            // visible reason; name the field instead of silently doing nothing.
+            else setFailure(`「${failures[0].name}」没有通过校验，但它当前不可见`);
           }
           return;
         }
@@ -1253,7 +1288,13 @@ window.__ModuleLoader__.load({
               custom: `${ENVELOPE_PREFIX}${JSON.stringify({ values: payload, ...(trimmed === '' ? {} : { notes: trimmed }) })}`,
             }],
           }))
-            .then(() => { clearWatchdog(); drafts.delete(carrier.key); })
+            .then(() => {
+              clearWatchdog();
+              drafts.delete(draftKey);
+              // The Host normally drops the request and unmounts us; closing locally means a
+              // store that does not clear it cannot leave a dead card on screen.
+              setClosed(true);
+            })
             .catch((cause) => {
               clearWatchdog();
               setBusy(null);
@@ -1265,6 +1306,8 @@ window.__ModuleLoader__.load({
           setFailure(cause instanceof Error ? cause.message : String(cause));
         }
       };
+
+      if (closed) return null;
 
       const hasNotes = spec.notes !== null && spec.notes !== undefined;
       /** `steps` pages through the fields and then the notes block; `single` shows everything. */
@@ -1317,8 +1360,7 @@ window.__ModuleLoader__.load({
                 type: 'button',
                 className: 'daf-close',
                 'aria-label': '放弃整组问题',
-                title: '放弃整组问题',
-                disabled: busy !== null,
+                title: '放弃整组问题（Esc）',
                 onClick: cancel,
               }, h(Icon, { name: 'close', size: 14 })))),
           h('div', { className: 'daf-body' }, h('div', { className: 'daf-fields' }, rendered)),
@@ -1343,7 +1385,7 @@ window.__ModuleLoader__.load({
               : null,
             h('div', { className: 'daf-feedback', role: 'status' }, failure ?? ''),
             h('div', { className: 'daf-footerActions' },
-              h(Button, { variant: 'outline', disabled: busy !== null, onClick: cancel }, '取消'),
+              h(Button, { variant: 'outline', onClick: cancel }, busy === null ? '取消' : '关闭'),
               h(Button, { variant: 'primary', disabled: busy !== null, onClick: submit }, busy === 'submit' ? '提交中…' : spec.submitLabel ?? '提交')))));
     }
 
@@ -1352,11 +1394,38 @@ window.__ModuleLoader__.load({
     /* ------------------------------------------------------------------ */
 
     function ScriptCard({ carrier, spec }) {
-      const [values, setValues] = React.useState(() => initialValues(spec));
+      const draftKey = spec.formId ?? carrier.key;
+      const [values, setValues] = React.useState(() => {
+        const restored = restoreDraft(draftKey);
+        return restored === null ? initialValues(spec) : restored.values;
+      });
       const [busy, setBusy] = React.useState(false);
       const [failure, setFailure] = React.useState(null);
+      const [closed, setClosed] = React.useState(false);
+      /** Leaving is local and unconditional, exactly as in `FormCard`. */
+      const close = () => {
+        setClosed(true);
+        setBusy(false);
+        try {
+          if (typeof carrier.cancel === 'function') Promise.resolve(carrier.cancel()).catch(() => {});
+        } catch { /* already gone locally */ }
+      };
+      React.useEffect(() => {
+        if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return undefined;
+        if (closed) return undefined;
+        const onKeyDown = (event) => {
+          if (event.key !== 'Escape') return;
+          event.preventDefault();
+          close();
+        };
+        window.addEventListener('keydown', onKeyDown, true);
+        return () => window.removeEventListener('keydown', onKeyDown, true);
+      }, [closed]);
       const built = React.useMemo(() => {
         try {
+          if (typeof window !== 'undefined' && window[SCRIPT_FLAG] !== true) {
+            return { error: new Error('script 模式需要页面显式授权：设置 window.__DSH_ASK_FORM_SCRIPT__ = true。它会在本页执行模型写的 JS，一个死循环就能冻结整个界面，所以默认关闭。') };
+          }
           const source = spec.script === null || spec.script === undefined ? '' : String(spec.script.source);
           return { build: new Function('React', 'h', 'props', `"use strict";return (${source})(props);`) };
         } catch (error) {
@@ -1376,7 +1445,7 @@ window.__ModuleLoader__.load({
             custom: `${ENVELOPE_PREFIX}${JSON.stringify({ values: payload })}`,
           }],
         }))
-          .then(() => { drafts.delete(carrier.key); })
+          .then(() => { drafts.delete(draftKey); setClosed(true); })
           .catch((cause) => {
             setBusy(false);
             setFailure(cause instanceof Error ? cause.message : String(cause));
@@ -1384,6 +1453,7 @@ window.__ModuleLoader__.load({
       };
 
       if (built.error) return h(ErrorCard, { carrier, error: built.error });
+      if (closed) return null;
 
       const setValues_ = (next) => setValues(typeof next === 'function' ? next(values) : next);
       const props = {
@@ -1396,7 +1466,7 @@ window.__ModuleLoader__.load({
         setValue: (name, next) => setValues((previous) => ({ ...previous, [name]: next })),
         setValues: setValues_,
         submit,
-        cancel: () => Promise.resolve(carrier.cancel()),
+        cancel: close,
         t: (key) => key,
       };
 
@@ -1436,8 +1506,28 @@ window.__ModuleLoader__.load({
 
     function ErrorCard({ carrier, error }) {
       const [busy, setBusy] = React.useState(false);
+      const [closed, setClosed] = React.useState(false);
       const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
       const details = error instanceof Error && typeof error.stack === 'string' ? error.stack : '';
+      /** An error surface is the most important one to be able to leave. */
+      const close = () => {
+        setClosed(true);
+        setBusy(false);
+        try {
+          if (typeof carrier.cancel === 'function') Promise.resolve(carrier.cancel()).catch(() => {});
+        } catch { /* already gone locally */ }
+      };
+      React.useEffect(() => {
+        if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return undefined;
+        if (closed) return undefined;
+        const onKeyDown = (event) => {
+          if (event.key !== 'Escape') return;
+          event.preventDefault();
+          close();
+        };
+        window.addEventListener('keydown', onKeyDown, true);
+        return () => window.removeEventListener('keydown', onKeyDown, true);
+      }, [closed]);
       const report = () => {
         setBusy(true);
         Promise.resolve(carrier.answer({
@@ -1446,8 +1536,9 @@ window.__ModuleLoader__.load({
             selected: [],
             custom: `${ENVELOPE_PREFIX}${JSON.stringify({ values: {}, scriptError: message })}`,
           }],
-        })).catch(() => setBusy(false));
+        })).then(() => setClosed(true)).catch(() => setBusy(false));
       };
+      if (closed) return null;
       return h(Layer, null,
         h('section', { className: 'daf-card' },
           h('header', { className: 'daf-header' },
@@ -1461,7 +1552,7 @@ window.__ModuleLoader__.load({
           h('footer', { className: 'daf-footer' },
             h('div', { className: 'daf-feedback' }),
             h('div', { className: 'daf-footerActions' },
-              h(Button, { variant: 'ghost', disabled: busy, onClick: () => { Promise.resolve(carrier.cancel()); } }, '取消'),
+              h(Button, { variant: 'ghost', onClick: close }, '取消'),
               h(Button, { variant: 'primary', disabled: busy, onClick: report }, '把错误交回模型')))));
     }
 

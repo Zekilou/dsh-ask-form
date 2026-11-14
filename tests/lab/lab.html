@@ -46,6 +46,8 @@ body{margin:0;min-height:100vh;font:13px/1.5 -apple-system,BlinkMacSystemFont,"S
 </head>
 <body>
 <div id="stage"></div>
+<!-- A page-level control outside the form: it must stay clickable while a form is open. -->
+<button id="bg" style="position:fixed;left:12px;top:12px;z-index:50;padding:6px 10px;font:12px sans-serif">背景按钮</button>
 <div class="lab-status" id="lab-status">loading…</div>
 <pre id="lab-answer" style="display:none"></pre>
 
@@ -70,11 +72,18 @@ window.__ModuleLoader__ = {
 document.write('<script src="' + (new URLSearchParams(location.search).get('client') === 'old' ? '/client-old.js' : '/client.js') + '"><\/script>');
 </script>
 <script>
+document.getElementById('bg').addEventListener('click', () => {
+  window.__bgClicks = (window.__bgClicks ?? 0) + 1;
+});
 (async () => {
   const status = document.getElementById('lab-status');
   const query = new URLSearchParams(location.search);
   const form = query.get('form') ?? 'single';
   const errors = query.get('errors') === '1' ? '&errors=1' : '';
+  /** `hang=1` models a socket that accepts an answer and never acknowledges it. */
+  const hang = query.get('hang') === '1';
+  /** `allow=1` opts the page into script mode, which is refused by default. */
+  if (query.get('allow') === '1') window.__DSH_ASK_FORM_SCRIPT__ = true;
   const response = await fetch(`/payload.json?form=${encodeURIComponent(form)}${errors}`);
   const body = await response.json();
   if (response.ok !== true) { status.textContent = 'payload error: ' + JSON.stringify(body); return; }
@@ -84,6 +93,7 @@ document.write('<script src="' + (new URLSearchParams(location.search).get('clie
     questions: body.questions,
     answer(payload) {
       window.__answer = payload;
+      if (hang) return new Promise(() => {});
       status.textContent = 'answer: ' + JSON.stringify(payload);
       const pre = document.getElementById('lab-answer');
       pre.style.display = 'block';

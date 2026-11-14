@@ -110,6 +110,13 @@ const FORMS = {
       { name: 'b', type: 'text', label: '第二步' },
     ],
   },
+  /** the script escape hatch: gated by a page flag unless the page opts in. */
+  script: {
+    title: '脚本模式',
+    mode: 'script',
+    script: { source: '(props) => props.h("div", null, "来自脚本的界面")', fallback: 'reject' },
+    fields: [{ name: 'unused', type: 'text', label: '占位', required: false }],
+  },
   /** the shape of a second round: the same form, carrying the previous failure. */
   reask: {
     title: '第二轮追问',

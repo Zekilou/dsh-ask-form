@@ -175,6 +175,82 @@ console.log('\nreal browser: closed list and the second round');
   check('a re-ask shows the previous failure on the field', errors.some((text) => text.includes('此项为必填')), errors);
 }
 
+/* --------------------------------------- the page must never be taken hostage */
+
+console.log('\nreal browser: an open form does not block the page');
+{
+  await open('single');
+  const frame = await page.evaluate(() => getComputedStyle(document.querySelector('.daf-frame')).pointerEvents);
+  const card = await page.evaluate(() => getComputedStyle(document.querySelector('.daf-card')).pointerEvents);
+  check('the positioning frame ignores the pointer', frame === 'none', frame);
+  check('the card itself still takes the pointer', card === 'auto', card);
+
+  await page.evaluate(() => { window.__bgClicks = 0; });
+  await page.click('#bg');
+  const clicks = await page.evaluate(() => window.__bgClicks);
+  check('a control behind the form stays clickable', clicks === 1, clicks);
+}
+
+console.log('\nreal browser: Escape leaves the card');
+{
+  await open('single');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(120);
+  const cards = await page.$$eval('.daf-card', (nodes) => nodes.length);
+  const cancelled = await page.evaluate(() => window.__cancelled === true);
+  check('Escape removes the card', cards === 0, cards);
+  check('Escape tells the carrier it was cancelled', cancelled === true, cancelled);
+}
+
+console.log('\nreal browser: a submit that never answers can still be abandoned');
+{
+  await page.goto(`${base}/?form=single&hang=1`, { waitUntil: 'load' });
+  await page.waitForSelector('.daf-card');
+  await page.click('.daf-options button:first-child');
+  await page.click('.daf-buttonPrimary');
+  await page.waitForTimeout(400);
+  const label = await page.textContent('.daf-footerActions button:first-child');
+  check('the exit is relabelled while a submit hangs', label.trim() === '关闭', label);
+  await page.click('.daf-footerActions button:first-child');
+  await page.waitForTimeout(150);
+  const cards = await page.$$eval('.daf-card', (nodes) => nodes.length);
+  check('the card closes even though the answer never landed', cards === 0, cards);
+  await page.evaluate(() => { window.__bgClicks = 0; });
+  await page.click('#bg');
+  check('the page is usable right afterwards', (await page.evaluate(() => window.__bgClicks)) === 1);
+}
+
+console.log('\nreal browser: the old bundle reproduces the lockout');
+{
+  await page.goto(`${base}/?form=single&client=old`, { waitUntil: 'load' });
+  await page.waitForSelector('.daf-card');
+  await page.evaluate(() => { window.__bgClicks = 0; });
+  await page.mouse.click(30, 30);
+  const clicks = await page.evaluate(() => window.__bgClicks ?? 0);
+  check('old bundle: the mask swallows clicks meant for the page', clicks === 0, clicks);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(150);
+  const cards = await page.$$eval('.daf-card', (nodes) => nodes.length);
+  check('old bundle: Escape does nothing', cards === 1, cards);
+}
+
+console.log('\nreal browser: script mode is opt-in');
+{
+  await page.goto(`${base}/?form=script`, { waitUntil: 'load' });
+  await page.waitForSelector('.daf-card');
+  const text = await page.textContent('.daf-card');
+  check('script mode is refused without the page flag', text.includes('显式授权'), text.slice(0, 60));
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(120);
+  check('the refusal surface can be closed too', (await page.$$eval('.daf-card', (nodes) => nodes.length)) === 0);
+}
+{
+  await page.goto(`${base}/?form=script&allow=1`, { waitUntil: 'load' });
+  await page.waitForSelector('.daf-card');
+  const text = await page.textContent('.daf-card');
+  check('an opting-in page still renders the script', text.includes('来自脚本的界面'), text.slice(0, 60));
+}
+
 console.log('\nreal browser: console hygiene');
 check('no console errors anywhere', consoleErrors.length === 0, consoleErrors.slice(0, 3));
 

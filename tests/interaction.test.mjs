@@ -176,7 +176,24 @@ async function questionsFor(args) {
 /* --------------------------------------------------------- load the bundle */
 
 let registration = null;
-globalThis.window = { __ModuleLoader__: { load: (value) => { registration = value; } } };
+/** Minimal window: the module loader plus the key listeners the card registers. */
+const listeners = new Map();
+globalThis.window = {
+  __ModuleLoader__: { load: (value) => { registration = value; } },
+  addEventListener(type, handler) {
+    if (!listeners.has(type)) listeners.set(type, new Set());
+    listeners.get(type).add(handler);
+  },
+  removeEventListener(type, handler) {
+    listeners.get(type)?.delete(handler);
+  },
+};
+const pressEscape = () => {
+  for (const handler of [...(listeners.get('keydown') ?? [])]) {
+    handler({ key: 'Escape', preventDefault() {} });
+  }
+  flush();
+};
 await import(new URL('../client.js', import.meta.url).href);
 const bundle = registration.factory((specifier) => {
   if (specifier === 'react') return React;
@@ -197,7 +214,7 @@ bundle.apply({
  * Mount a form compiled by the real Host and return the handle used by the cases below.
  * Hooks are reset per mount, which is what mounting a new card on a new carrier means.
  */
-async function mount(args) {
+async function mount(args, options = {}) {
   formCount += 1;
   const questions = await questionsFor(args);
   const carrier = {
@@ -207,7 +224,12 @@ async function mount(args) {
     questions,
     answered: null,
     cancelled: 0,
-    answer(value) { carrier.answered = value; return Promise.resolve(); },
+    answer(value) {
+      carrier.answered = value;
+      // `hang` models a socket that accepted the answer and never acknowledged it: the exact
+      // situation that used to leave a full-page overlay with every exit disabled.
+      return options.hang === true ? new Promise(() => {}) : Promise.resolve();
+    },
     cancel() { carrier.cancelled += 1; return Promise.resolve(); },
     delegate() {},
     isDelegation: () => false,
@@ -252,6 +274,49 @@ async function mount(args) {
     },
   };
   return handler;
+}
+
+/** Mount an already-compiled request again, as the Host does when it re-asks the same form. */
+async function mountQuestions(questions, options = {}) {
+  formCount += 1;
+  const carrier = {
+    key: `question:${formCount}`,
+    kind: 'question',
+    sessionId: 'session-1',
+    questions,
+    answered: null,
+    cancelled: 0,
+    answer(value) { carrier.answered = value; return options.hang === true ? new Promise(() => {}) : Promise.resolve(); },
+    cancel() { carrier.cancelled += 1; return Promise.resolve(); },
+    delegate() {},
+    isDelegation: () => false,
+    abort() {},
+  };
+  instances = new Map();
+  effectQueue = [];
+  dirty = false;
+  rootElement = React.createElement(registered.component, { matched: carrier });
+  flush();
+  return {
+    carrier,
+    tree: () => renderedTree,
+    text: () => textOf(renderedTree),
+    classes: () => classesOf(renderedTree),
+    all: (predicate) => findAll(renderedTree, predicate),
+    one: (predicate) => findOne(renderedTree, predicate),
+    fire(element, name, event = {}) {
+      const fn = element.props?.[name];
+      if (typeof fn !== 'function') throw new Error(`element has no ${name} handler`);
+      fn({ target: { value: '' }, preventDefault() {}, ...event });
+      flush();
+    },
+    type(element, value) { this.fire(element, 'onChange', { target: { value } }); },
+    submit() { this.fire(this.one(byClass('daf-buttonPrimary')), 'onClick'); },
+    envelope() {
+      const custom = carrier.answered?.answers?.[0]?.custom;
+      return typeof custom === 'string' ? JSON.parse(custom.slice('\u0001dsh-form:'.length)) : null;
+    },
+  };
 }
 
 const otherInput = (handle) => handle.one((element) => element.type === 'input' && typeof element.props?.['aria-label'] === 'string' && element.props['aria-label'].includes('其他'));
@@ -394,6 +459,37 @@ console.log('\ncase: stylesheet ownership');
   const styles = handle.all((element) => element.type === 'style');
   check('the stylesheet is not rendered inside the tree', styles.length === 0, styles.length);
   check('the form still renders its card', classesOf(handle.tree()).has('daf-card') === true);
+}
+
+console.log('\ncase: the card can always be left');
+{
+  const handle = await mount({ title: '必填', fields: [{ name: 'goal', type: 'text', label: '目标' }] }, { hang: true });
+  handle.type(handle.one((element) => element.type === 'input' && element.props?.['aria-label'] === '目标'), '写点东西');
+  handle.submit();
+  const exit = handle.all((element) => element.type === 'button' && textOf(element).includes('关闭'));
+  check('a pending submit still offers a live exit', exit.length === 1 && exit[0].props.disabled !== true, exit.map((element) => element.props.disabled));
+  handle.fire(exit[0], 'onClick');
+  check('clicking that exit removes the card', handle.tree() === null);
+  check('closing tells the carrier', handle.carrier.cancelled === 1, handle.carrier.cancelled);
+}
+
+console.log('\ncase: Escape leaves the card');
+{
+  const handle = await mount({ title: '必填', fields: [{ name: 'goal', type: 'text', label: '目标' }] }, { hang: true });
+  check('the card is on screen first', handle.tree() !== null);
+  pressEscape();
+  check('Escape removes the card', handle.tree() === null);
+}
+
+console.log('\ncase: a dismissed form keeps its draft');
+{
+  const questions = await questionsFor({ title: '草稿', fields: [{ name: 'goal', type: 'text', label: '目标', required: false }] });
+  const first = await mountQuestions(questions, { hang: false });
+  first.type(first.one((element) => element.type === 'input' && element.props?.['aria-label'] === '目标'), '草稿内容');
+  pressEscape();
+  check('first card closed', first.tree() === null);
+  const second = await mountQuestions(questions, { hang: false });
+  check('re-asking the same form restores the draft', second.one((element) => element.type === 'input' && element.props?.['aria-label'] === '目标').props.value === '草稿内容');
 }
 
 console.log(failures.length === 0 ? '\nALL INTERACTION CHECKS PASSED' : `\n${failures.length} INTERACTION CHECK(S) FAILED: ${failures.join(', ')}`);

@@ -14,7 +14,7 @@ English | [中文](README.zh.md)
 - **Typed results** — `scale`/`slider`/`number` → number, `ranking` → ordered array, `matrix` → `{row: choice}`, `budget` → `{option: number}`, `tags` → string array
 - **Interview packs** — `requirement-intake`, `design-choice`, `release-gate`, `incident-intake`, tunable through `pack_args`
 - **Free-text "Other" by default** on `single`, `multi` and `tags` (`allow_other: false` closes the list). The whole row is the target: clicking it focuses the field, typing selects it on `single`, Enter turns it into a removable chip on `multi`/`tags`.
-- **Escape hatch** — `mode: "script"` renders a custom React element in the Web UI; declare `script.fallback` for other surfaces
+- **Escape hatch (opt-in)** — `mode: "script"` renders a custom React element, but only on a page that sets `window.__DSH_ASK_FORM_SCRIPT__ = true`: arbitrary JS can freeze the tab and nothing in a browser can interrupt it. Declare `script.fallback` for other surfaces
 - **Graceful degradation** — a surface without this plugin's renderer still receives every field as a plain question, and the result reports `renderer: "generic"`. Script mode fails loud instead of degrading silently.
 
 ## Install
@@ -88,6 +88,7 @@ Notable behaviours:
 
 - **Lossless wire payload** — the spec must survive a JSON round trip unchanged; a present-but-`undefined` property makes the Remote event gateway reject the whole request.
 - **Self-probe (opt-in)** — set `window.__DSH_ASK_FORM_PROBE__ = true`, then a form titled `DSH_ASK_FORM_PROBE` answers itself with a DOM report (card rect, computed styles, `elementFromPoint` hit tests). Off by default: a form that answers itself is a hazard, not a feature.
+- **Non-blocking surface** — the overlay never captures the whole viewport: background clicks pass through, the card stays below app dialogs, and every exit path works offline.
 - **Fail-safe registration** — the bundle registers inside `try`/`catch` and checks that the slot chain exists; a broken registration costs the form surface, never the page.
 - **One stylesheet per document** — styles live on `document.head`, not in the rendered tree, so the script and error surfaces are styled even when they are the first thing on screen.
 - **Watchdog** — if an answer never reaches the Host within 10 seconds (a suspended or replaced connection), the buttons re-enable with an explicit message instead of hanging.
@@ -132,8 +133,13 @@ Before/after of the free-text row (old bundle vs. 0.5.0): [before](docs/shots/be
 
 ## Deliberate deviations from the shipped question card
 
-- The layer is a **centered modal with a mask**, not a composer-seat takeover.
-- Clicking the mask does not dismiss, and Escape does not cancel, so a half-filled form cannot be lost by a stray click.
+- The form is a **centered panel**, not a composer-seat takeover. It is a *positioning* layer
+  only: the frame is `pointer-events:none` and sits below the app's own dialogs, so an approval
+  prompt or a settings dialog can never end up underneath it.
+- **A form can never take the page hostage.** Escape closes it, `取消` and the close button are
+  live even while a submit is in flight, and closing is a *local* operation — one dropped socket
+  cannot leave a full-page layer with no way out. Closing also answers `cancelled` on a
+  best-effort basis, and drafts are keyed by form so a re-ask restores what was typed.
 
 ## Attribution
 
